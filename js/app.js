@@ -64,6 +64,11 @@ const DEFAULT_EXAMPLES = [
         filename: "sd_watermarked_preview.mp4",
         path: "VIDEO_TEST/sd_watermarked_preview.mp4",
         thumbnail_url: "thumbnails/sd_watermarked_preview.jpg"
+    },
+    {
+        filename: "fromYout10s.mp4",
+        path: "VIDEO_TEST/fromYout10s.mp4",
+        thumbnail_url: "thumbnails/fromYout10s.jpg"
     }
 ];
 
@@ -99,9 +104,8 @@ async function loadExamples() {
             return;
         }
         const data = await response.json();
-        const allowedFilenames = new Set(DEFAULT_EXAMPLES.map(ex => ex.filename));
-        const filtered = (data.examples || []).filter(ex => allowedFilenames.has(ex.filename));
-        const examples = filtered.length > 0 ? filtered : DEFAULT_EXAMPLES;
+        const backendByName = new Map((data.examples || []).map(ex => [ex.filename, ex]));
+        const examples = DEFAULT_EXAMPLES.map(ex => backendByName.get(ex.filename) || ex);
         renderExamples(examples);
     } catch (err) {
         console.warn("Backend unavailable, loading static VIDEO_TEST examples:", err);
