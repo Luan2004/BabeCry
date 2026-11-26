@@ -99,6 +99,7 @@ const cameraBtn = document.getElementById("cameraBtn");
 const runBtn = document.getElementById("runBtn");
 const stopBtn = document.getElementById("stopBtn");
 const statusBanner = document.getElementById("statusBanner");
+const backendStatusDot = document.getElementById("backendStatusDot");
 
 const visionStatus = document.getElementById("visionStatus");
 const audioStatus = document.getElementById("audioStatus");
@@ -940,8 +941,40 @@ stopBtn.addEventListener("click", () => {
     }
 });
 
+async function checkBackendHealth() {
+    if (!backendStatusDot) return false;
+    try {
+        const opts = { cache: "no-store" };
+        if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+            opts.signal = AbortSignal.timeout(4000);
+        }
+        const resp = await fetch(`${API_BASE_URL}/health`, opts);
+        if (resp.ok) {
+            backendStatusDot.classList.remove("disconnected");
+            backendStatusDot.classList.add("connected");
+            backendStatusDot.title = `Đã kết nối backend (${API_BASE_URL})`;
+            return true;
+        }
+    } catch (_) {}
+
+    backendStatusDot.classList.remove("connected");
+    backendStatusDot.classList.add("disconnected");
+    backendStatusDot.title = `Mất kết nối backend (${API_BASE_URL}) - Bấm để kiểm tra lại`;
+    return false;
+}
+
+if (backendStatusDot) {
+    backendStatusDot.addEventListener("click", async () => {
+        backendStatusDot.title = "Đang kiểm tra kết nối backend...";
+        await syncApiBaseUrlFromGist();
+        await checkBackendHealth();
+    });
+}
+
 // Initialize on DOM Ready
 document.addEventListener("DOMContentLoaded", async () => {
     await syncApiBaseUrlFromGist();
+    checkBackendHealth();
+    setInterval(checkBackendHealth, 15000);
     loadExamples();
 });
