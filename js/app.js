@@ -6,16 +6,75 @@
  */
 
 // Base URL for Backend API calls.
-// Priority: 1) ?api=https://... query param (saved to localStorage), 2) localStorage, 3) DEFAULT_API_BASE_URL
+// Priority: 1) ?api=https://... query param (saved to localStorage), 2) GitHub Gist babecry_api.json, 3) localStorage, 4) DEFAULT_API_BASE_URL
 const DEFAULT_API_BASE_URL = "https://tub-her-verse-scheduled.trycloudflare.com";
+const GIST_ID = "ec32a46e3fc303212389a970c68466aa";
+const GIST_FILENAME = "babecry_api.json";
+const GIST_API_ENDPOINT = `https://api.github.com/gists/${GIST_ID}`;
+const GIST_RAW_URL = `https://gist.githubusercontent.com/Luan2004/${GIST_ID}/raw/${GIST_FILENAME}`;
+
 const urlParams = new URLSearchParams(window.location.search);
 const apiFromQuery = urlParams.get("api");
 if (apiFromQuery) {
     localStorage.setItem("babecry_api_base_url", apiFromQuery.replace(/\/+$/, ""));
 }
-const API_BASE_URL = (
+let API_BASE_URL = (
     localStorage.getItem("babecry_api_base_url") || DEFAULT_API_BASE_URL
 ).replace(/\/+$/, "");
+
+function extractApiUrlFromGistContent(rawText) {
+    if (!rawText) return "";
+    try {
+        const parsed = JSON.parse(rawText);
+        if (parsed && typeof parsed.api_url === "string") {
+            return parsed.api_url.trim().replace(/\/+$/, "");
+        }
+    } catch (_) {
+        const match = rawText.match(/https:\/\/[a-zA-Z0-9.-]+/);
+        if (match) return match[0].trim().replace(/\/+$/, "");
+    }
+    return "";
+}
+
+async function syncApiBaseUrlFromGist() {
+    if (apiFromQuery) return;
+    const fetchWithTimeout = (url) => {
+        const opts = { cache: "no-store" };
+        if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+            opts.signal = AbortSignal.timeout(4000);
+        }
+        return fetch(url, opts);
+    };
+
+    try {
+        const resp = await fetchWithTimeout(GIST_API_ENDPOINT);
+        if (resp.ok) {
+            const gist = await resp.json();
+            const content = gist?.files?.[GIST_FILENAME]?.content;
+            const url = extractApiUrlFromGistContent(content);
+            if (url) {
+                API_BASE_URL = url;
+                localStorage.setItem("babecry_api_base_url", url);
+                return;
+            }
+        }
+    } catch (err) {
+        console.warn("Gist API lookup failed, trying raw gist:", err);
+    }
+
+    try {
+        const resp = await fetchWithTimeout(`${GIST_RAW_URL}?t=${Date.now()}`);
+        if (resp.ok) {
+            const url = extractApiUrlFromGistContent(await resp.text());
+            if (url) {
+                API_BASE_URL = url;
+                localStorage.setItem("babecry_api_base_url", url);
+            }
+        }
+    } catch (err) {
+        console.warn("Raw Gist lookup failed, using fallback API_BASE_URL:", err);
+    }
+}
 
 // DOM Elements
 const inputVideo = document.getElementById("inputVideo");
@@ -588,6 +647,7 @@ runBtn.addEventListener("click", startAnalysis);
 stopBtn.addEventListener("click", stopAnalysis);
 
 // Initialize on DOM Ready
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+    await syncApiBaseUrlFromGist();
     loadExamples();
 });
