@@ -411,8 +411,6 @@ function startPlayback() {
         outSeekbar.max = Math.max(1, bufferedSteps.length - 1);
     }
 
-    // Play input video in sync
-    inputVideo.currentTime = 0;
     resumePlayback();
 }
 
@@ -426,10 +424,7 @@ function resumePlayback() {
     // If reached end, restart from beginning
     if (currentPlayIdx >= bufferedSteps.length) {
         currentPlayIdx = 0;
-        inputVideo.currentTime = 0;
     }
-
-    inputVideo.play().catch(() => {});
 
     if (iconPlay && iconPause) {
         iconPlay.style.display = "none";
@@ -466,7 +461,6 @@ function pausePlayback() {
         clearInterval(playbackInterval);
         playbackInterval = null;
     }
-    inputVideo.pause();
     if (iconPlay && iconPause) {
         iconPlay.style.display = "block";
         iconPause.style.display = "none";
@@ -505,7 +499,6 @@ function stopAnalysis() {
         clearInterval(playbackInterval);
         playbackInterval = null;
     }
-    inputVideo.pause();
     isAnalyzing = false;
     isPaused = true;
     runBtn.disabled = false;
@@ -575,9 +568,6 @@ outSeekbar.addEventListener("input", () => {
         const step = bufferedSteps[idx];
         renderStep(step);
         updateControlsUI(step, idx);
-        if (step.current_time_sec !== undefined) {
-            inputVideo.currentTime = step.current_time_sec;
-        }
     }
 });
 
@@ -589,40 +579,7 @@ outSeekbar.addEventListener("change", () => {
         const step = bufferedSteps[idx];
         renderStep(step);
         updateControlsUI(step, idx);
-        if (step.current_time_sec !== undefined) {
-            inputVideo.currentTime = step.current_time_sec;
-        }
     }
-});
-
-// Bidirectional sync with input video player
-inputVideo.addEventListener("pause", () => {
-    if (isPlaybackStarted && !isPaused && !inputVideo.ended) {
-        pausePlayback();
-    }
-});
-
-inputVideo.addEventListener("play", () => {
-    if (isPlaybackStarted && isPaused) {
-        resumePlayback();
-    }
-});
-
-inputVideo.addEventListener("seeked", () => {
-    if (!isPlaybackStarted || bufferedSteps.length === 0) return;
-    const targetTime = inputVideo.currentTime;
-    let closestIdx = 0;
-    let minDiff = Infinity;
-    for (let i = 0; i < bufferedSteps.length; i++) {
-        const diff = Math.abs((bufferedSteps[i].current_time_sec || 0) - targetTime);
-        if (diff < minDiff) {
-            minDiff = diff;
-            closestIdx = i;
-        }
-    }
-    currentPlayIdx = closestIdx;
-    renderStep(bufferedSteps[currentPlayIdx]);
-    updateControlsUI(bufferedSteps[currentPlayIdx], currentPlayIdx);
 });
 
 // Action Button Event Bindings
