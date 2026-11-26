@@ -120,7 +120,8 @@ let cameraAudioProcessor = null;
 let cameraAudioSource = null;
 let cameraPcmRing = new Float32Array(16000 * 2); // 2s rolling buffer at 16kHz
 let cameraPcmFilled = 0;
-let cameraAloneStartMs = null;
+let cameraSessionId = "cam_init";
+let cameraLastFrameMs = 0;
 
 const DEFAULT_EXAMPLES = [
     {
@@ -368,7 +369,7 @@ function stopCameraStream() {
         cameraAudioCtx = null;
     }
     cameraPcmFilled = 0;
-    cameraAloneStartMs = null;
+    cameraLastFrameMs = 0;
 
     if (cameraStream) {
         cameraStream.getTracks().forEach(track => track.stop());
@@ -405,8 +406,11 @@ async function runCameraRealtimeLoop() {
                 if (audioB64) {
                     formData.append("audio_b64", audioB64);
                 }
-                const aloneSec = cameraAloneStartMs ? (Date.now() - cameraAloneStartMs) / 1000 : 0;
-                formData.append("alone_duration_sec", aloneSec.toFixed(1));
+                const nowMs = Date.now();
+                const dtSec = cameraLastFrameMs ? Math.min(2.0, (nowMs - cameraLastFrameMs) / 1000) : 0.25;
+                cameraLastFrameMs = nowMs;
+                formData.append("session_id", cameraSessionId);
+                formData.append("dt_sec", dtSec.toFixed(3));
 
                 cameraAbortController = new AbortController();
                 const resp = await fetch(`${API_BASE_URL}/api/analyze/frame`, {
@@ -426,11 +430,6 @@ async function runCameraRealtimeLoop() {
 
                 if (resp.ok && isCameraActive) {
                     const data = await resp.json();
-                    if (data.is_alone) {
-                        if (!cameraAloneStartMs) cameraAloneStartMs = Date.now();
-                    } else {
-                        cameraAloneStartMs = null;
-                    }
 
                     resultPlaceholder.style.display = "none";
                     outputFrame.style.display = "block";
@@ -514,7 +513,8 @@ async function startCamera() {
         }
 
         isCameraActive = true;
-        cameraAloneStartMs = null;
+        cameraSessionId = `cam_${Date.now()}`;
+        cameraLastFrameMs = Date.now();
         runBtn.disabled = true;
         stopBtn.disabled = false;
 
