@@ -122,6 +122,7 @@ let cameraPcmRing = new Float32Array(16000 * 2); // 2s rolling buffer at 16kHz
 let cameraPcmFilled = 0;
 let cameraSessionId = "cam_init";
 let cameraLastFrameMs = 0;
+let cameraLastAudioSentMs = 0;
 
 const DEFAULT_EXAMPLES = [
     {
@@ -391,22 +392,25 @@ async function runCameraRealtimeLoop() {
             if (!cameraCanvas) {
                 cameraCanvas = document.createElement("canvas");
             }
-            const maxW = 640;
+            const maxW = 480;
             const scale = inputVideo.videoWidth > maxW ? (maxW / inputVideo.videoWidth) : 1;
             cameraCanvas.width = Math.round(inputVideo.videoWidth * scale);
             cameraCanvas.height = Math.round(inputVideo.videoHeight * scale);
             const ctx = cameraCanvas.getContext("2d");
             ctx.drawImage(inputVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
 
-            const blob = await new Promise(res => cameraCanvas.toBlob(res, "image/jpeg", 0.75));
+            const blob = await new Promise(res => cameraCanvas.toBlob(res, "image/jpeg", 0.65));
             if (blob && isCameraActive) {
                 const formData = new FormData();
                 formData.append("frame", blob, "frame.jpg");
-                const audioB64 = getCameraAudioBase64();
-                if (audioB64) {
-                    formData.append("audio_b64", audioB64);
-                }
                 const nowMs = Date.now();
+                if (nowMs - cameraLastAudioSentMs >= 1000) {
+                    const audioB64 = getCameraAudioBase64();
+                    if (audioB64) {
+                        formData.append("audio_b64", audioB64);
+                        cameraLastAudioSentMs = nowMs;
+                    }
+                }
                 const dtSec = cameraLastFrameMs ? Math.min(2.0, (nowMs - cameraLastFrameMs) / 1000) : 0.25;
                 cameraLastFrameMs = nowMs;
                 formData.append("session_id", cameraSessionId);
@@ -455,7 +459,7 @@ async function runCameraRealtimeLoop() {
     }
 
     if (isCameraActive) {
-        cameraLoopTimer = setTimeout(runCameraRealtimeLoop, 50);
+        cameraLoopTimer = setTimeout(runCameraRealtimeLoop, 0);
     }
 }
 
@@ -515,6 +519,7 @@ async function startCamera() {
         isCameraActive = true;
         cameraSessionId = `cam_${Date.now()}`;
         cameraLastFrameMs = Date.now();
+        cameraLastAudioSentMs = 0;
         runBtn.disabled = true;
         stopBtn.disabled = false;
 
@@ -665,8 +670,8 @@ function startAnalysis() {
     statusBanner.style.backgroundColor = "#2563EB";
     statusBanner.style.color = "#FFFFFF";
     statusBanner.innerHTML = `
-        <div class="banner-title">[TỐC ĐỘ CAO] Hệ thống đang phân tích nhanh (imgsz=480, skip=6)...</div>
-        <div class="banner-desc">Khi tiến trình đạt 15% (~2-3 giây đầu), video gốc và kết quả nhận diện sẽ tự động phát mượt mà.</div>
+        <div class="banner-title">[TỐC ĐỘ CAO] Hệ thống đang phân tích nhanh (imgsz=480, skip=2)...</div>
+        <div class="banner-desc">Khi tiến trình đạt 15% (~2-3 giây đầu), video gốc và kết quả nhận diện sẽ tự động phát đồng bộ.</div>
     `;
 
     const streamUrl = `${API_BASE_URL}/api/analyze/stream?video_path=${encodeURIComponent(currentVideoPath)}`;
@@ -763,22 +768,31 @@ function resumePlayback() {
         resultViewer.classList.add("playing");
     }
 
-    // Compute interval for ~6-frame skip at 25 fps (~240ms per detection frame)
-    const stepInterval = 240;
-    playbackInterval = setInterval(() => {
+    const scheduleNextFrame = () => {
+        if (isPaused) return;
         if (currentPlayIdx < bufferedSteps.length) {
             const step = bufferedSteps[currentPlayIdx];
             renderStep(step);
             updateControlsUI(step, currentPlayIdx);
+
+            const nextStep = bufferedSteps[currentPlayIdx + 1];
+            let delayMs = 80;
+            if (nextStep && typeof step.current_time_sec === "number" && typeof nextStep.current_time_sec === "number") {
+                const dtMs = Math.round((nextStep.current_time_sec - step.current_time_sec) * 1000);
+                if (dtMs > 0) delayMs = Math.min(500, Math.max(25, dtMs));
+            }
             currentPlayIdx++;
+            playbackInterval = setTimeout(scheduleNextFrame, delayMs);
         } else {
             // Reached current buffer end
             if (!eventSource) {
-                // Done analyzing whole video
                 pausePlayback();
+            } else {
+                playbackInterval = setTimeout(scheduleNextFrame, 50);
             }
         }
-    }, stepInterval);
+    };
+    scheduleNextFrame();
 }
 
 function pausePlayback() {
