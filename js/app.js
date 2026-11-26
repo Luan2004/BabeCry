@@ -94,6 +94,8 @@ const outSeekbar = document.getElementById("outSeekbar");
 const outTimeText = document.getElementById("outTimeText");
 const outFullscreenBtn = document.getElementById("outFullscreenBtn");
 
+const addVideoBtn = document.getElementById("addVideoBtn");
+const cameraBtn = document.getElementById("cameraBtn");
 const runBtn = document.getElementById("runBtn");
 const stopBtn = document.getElementById("stopBtn");
 const statusBanner = document.getElementById("statusBanner");
@@ -107,6 +109,10 @@ const examplesGrid = document.getElementById("examplesGrid");
 let currentVideoPath = "";
 let eventSource = null;
 let isAnalyzing = false;
+let cameraStream = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let cameraMimeType = "video/webm";
 
 const DEFAULT_EXAMPLES = [
     {
@@ -174,6 +180,9 @@ async function loadExamples() {
 
 // 2. Select an Example Video
 function selectExample(path, cardElement, thumbnailUrl) {
+    if (cameraStream) {
+        stopCameraStream();
+    }
     if (isAnalyzing) {
         stopAnalysis();
     }
@@ -187,6 +196,9 @@ function selectExample(path, cardElement, thumbnailUrl) {
     }
 
     // Serve static VIDEO_TEST/ directly from Frontend/Vercel when available; uploaded videos come from backend
+    inputVideo.srcObject = null;
+    inputVideo.muted = false;
+    inputVideo.controls = true;
     inputVideo.src = path.startsWith("VIDEO_TEST/")
         ? path
         : `${API_BASE_URL}/api/video?path=${encodeURIComponent(path)}`;
@@ -231,12 +243,15 @@ dropzone.addEventListener("drop", (e) => {
 });
 
 async function handleUploadFile(file) {
+    if (cameraStream) {
+        stopCameraStream();
+    }
     if (isAnalyzing) {
         stopAnalysis();
     }
 
     // Unselect examples
-    document.querySelectorAll(".examples-table tbody tr").forEach(r => r.classList.remove("selected"));
+    document.querySelectorAll(".example-card").forEach(c => c.classList.remove("selected"));
 
     const formData = new FormData();
     formData.append("file", file);
@@ -259,6 +274,10 @@ async function handleUploadFile(file) {
         const data = await response.json();
         currentVideoPath = data.path;
 
+        inputVideo.srcObject = null;
+        inputVideo.muted = false;
+        inputVideo.controls = true;
+        inputVideo.poster = "";
         inputVideo.src = `${API_BASE_URL}/api/video?path=${encodeURIComponent(currentVideoPath)}`;
         inputVideo.style.display = "block";
         dropzone.style.display = "none";
@@ -266,10 +285,125 @@ async function handleUploadFile(file) {
 
         statusBanner.textContent = `SẴN SÀNG: Đã tải lên thành công ${data.filename}. Vui lòng bấm "Phân Tích Video".`;
         resetOutputs();
+        return true;
     } catch (err) {
         console.error("Upload failed:", err);
         statusBanner.textContent = `LỖI: Không thể tải lên video. Vui lòng thử lại.`;
+        return false;
     }
+}
+
+// 3b. Computer Camera Capture Handling
+function resetCameraButton() {
+    if (cameraBtn) {
+        cameraBtn.textContent = "Bật Camera";
+        cameraBtn.classList.remove("camera-active");
+    }
+}
+
+function stopCameraStream() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        try {
+            mediaRecorder.onstop = null;
+            mediaRecorder.stop();
+        } catch (_) {}
+    }
+    mediaRecorder = null;
+    recordedChunks = [];
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+    }
+    inputVideo.srcObject = null;
+    inputVideo.muted = false;
+    inputVideo.controls = true;
+    resetCameraButton();
+}
+
+async function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("Trình duyệt không hỗ trợ truy cập Camera.");
+        return;
+    }
+
+    if (isAnalyzing) {
+        stopAnalysis();
+    }
+
+    try {
+        try {
+            cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        } catch (_) {
+            cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+
+        document.querySelectorAll(".example-card").forEach(c => c.classList.remove("selected"));
+        currentVideoPath = "";
+
+        inputVideo.src = "";
+        inputVideo.poster = "";
+        inputVideo.srcObject = cameraStream;
+        inputVideo.muted = true;
+        inputVideo.controls = false;
+        inputVideo.style.display = "block";
+        dropzone.style.display = "none";
+        await inputVideo.play();
+
+        recordedChunks = [];
+        const preferredTypes = ["video/mp4", "video/webm;codecs=vp8,opus", "video/webm"];
+        cameraMimeType = preferredTypes.find(t => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t)) || "video/webm";
+        mediaRecorder = new MediaRecorder(cameraStream, { mimeType: cameraMimeType });
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+                recordedChunks.push(e.data);
+            }
+        };
+        mediaRecorder.start(500);
+
+        if (cameraBtn) {
+            cameraBtn.textContent = "Tắt Camera";
+            cameraBtn.classList.add("camera-active");
+        }
+
+        statusBanner.className = "status-banner";
+        statusBanner.style.backgroundColor = "#FEF3C7";
+        statusBanner.style.color = "#92400E";
+        statusBanner.textContent = 'CAMERA ĐANG BẬT: Đang ghi hình từ camera máy tính. Bấm "Tắt Camera" để lưu video hoặc bấm "Phân Tích Video" để dừng ghi và phân tích ngay.';
+        resetOutputs();
+    } catch (err) {
+        console.error("Camera access error:", err);
+        stopCameraStream();
+        statusBanner.textContent = "LỖI: Không thể mở camera máy tính. Vui lòng kiểm tra quyền truy cập camera.";
+    }
+}
+
+function stopCameraAndUpload() {
+    return new Promise((resolve) => {
+        if (!mediaRecorder || mediaRecorder.state === "inactive") {
+            stopCameraStream();
+            resolve(false);
+            return;
+        }
+
+        const chunksRef = recordedChunks;
+        const mime = cameraMimeType || "video/webm";
+        const ext = mime.includes("mp4") ? "mp4" : "webm";
+
+        mediaRecorder.onstop = async () => {
+            const blob = new Blob(chunksRef, { type: mime });
+            stopCameraStream();
+            if (blob.size === 0) {
+                statusBanner.textContent = "LỖI: Video từ camera trống, vui lòng thử lại.";
+                resolve(false);
+                return;
+            }
+            const file = new File([blob], `camera_${Date.now()}.${ext}`, { type: mime });
+            const ok = await handleUploadFile(file);
+            resolve(ok);
+        };
+
+        mediaRecorder.stop();
+    });
 }
 
 // 4. Reset Outputs
@@ -349,7 +483,12 @@ function updateControlsUI(step, idx) {
 }
 
 // 5. Start Streaming Analysis with Buffer Strategy
-function startAnalysis() {
+async function startAnalysis() {
+    if (cameraStream) {
+        const uploaded = await stopCameraAndUpload();
+        if (!uploaded) return;
+    }
+
     if (!currentVideoPath) {
         alert("Vui lòng chọn video mẫu hoặc tải lên video trước khi phân tích.");
         return;
@@ -643,6 +782,21 @@ outSeekbar.addEventListener("change", () => {
 });
 
 // Action Button Event Bindings
+if (addVideoBtn) {
+    addVideoBtn.addEventListener("click", () => {
+        fileInput.value = "";
+        fileInput.click();
+    });
+}
+if (cameraBtn) {
+    cameraBtn.addEventListener("click", () => {
+        if (cameraStream) {
+            stopCameraAndUpload();
+        } else {
+            startCamera();
+        }
+    });
+}
 runBtn.addEventListener("click", startAnalysis);
 stopBtn.addEventListener("click", stopAnalysis);
 
