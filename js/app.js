@@ -49,36 +49,66 @@ let currentVideoPath = "";
 let eventSource = null;
 let isAnalyzing = false;
 
-// 1. Initial Load: Fetch Test Examples with Visual Thumbnails
+const DEFAULT_EXAMPLES = [
+    {
+        filename: "294613747-rivne-ukraine-june-12-2024-chi.mp4",
+        path: "VIDEO_TEST/294613747-rivne-ukraine-june-12-2024-chi.mp4",
+        thumbnail_url: "thumbnails/294613747-rivne-ukraine-june-12-2024-chi.jpg"
+    },
+    {
+        filename: "280167556-female-teacher-checking-kids-d.mp4",
+        path: "VIDEO_TEST/280167556-female-teacher-checking-kids-d.mp4",
+        thumbnail_url: "thumbnails/280167556-female-teacher-checking-kids-d.jpg"
+    },
+    {
+        filename: "050870650-preschool-children-are-early-c.mp4",
+        path: "VIDEO_TEST/050870650-preschool-children-are-early-c.mp4",
+        thumbnail_url: "thumbnails/050870650-preschool-children-are-early-c.jpg"
+    },
+    {
+        filename: "sd_watermarked_preview.mp4",
+        path: "VIDEO_TEST/sd_watermarked_preview.mp4",
+        thumbnail_url: "thumbnails/sd_watermarked_preview.jpg"
+    }
+];
+
+function renderExamples(examples) {
+    examplesGrid.innerHTML = "";
+    examples.forEach((ex, idx) => {
+        const card = document.createElement("div");
+        card.className = "example-card";
+        card.innerHTML = `
+            <div class="example-thumb-wrapper">
+                <img class="example-thumb-img" src="${ex.thumbnail_url}" alt="${ex.filename}">
+            </div>
+            <div class="example-name">${ex.filename}</div>
+        `;
+        card.addEventListener("click", () => {
+            selectExample(ex.path, card, ex.thumbnail_url);
+        });
+        examplesGrid.appendChild(card);
+
+        // Auto-select first example video
+        if (idx === 0 && !currentVideoPath) {
+            selectExample(ex.path, card, ex.thumbnail_url);
+        }
+    });
+}
+
+// 1. Initial Load: Fetch Test Examples with Visual Thumbnails (fallback to static VIDEO_TEST/)
 async function loadExamples() {
     try {
         const response = await fetch(`${API_BASE_URL}/api/examples`);
-        if (!response.ok) return;
+        if (!response.ok) {
+            renderExamples(DEFAULT_EXAMPLES);
+            return;
+        }
         const data = await response.json();
-        const examples = data.examples || [];
-
-        examplesGrid.innerHTML = "";
-        examples.forEach((ex, idx) => {
-            const card = document.createElement("div");
-            card.className = "example-card";
-            card.innerHTML = `
-                <div class="example-thumb-wrapper">
-                    <img class="example-thumb-img" src="${ex.thumbnail_url}" alt="${ex.filename}">
-                </div>
-                <div class="example-name">${ex.filename}</div>
-            `;
-            card.addEventListener("click", () => {
-                selectExample(ex.path, card, ex.thumbnail_url);
-            });
-            examplesGrid.appendChild(card);
-
-            // Auto-select first example video
-            if (idx === 0 && !currentVideoPath) {
-                selectExample(ex.path, card, ex.thumbnail_url);
-            }
-        });
+        const examples = (data.examples && data.examples.length > 0) ? data.examples : DEFAULT_EXAMPLES;
+        renderExamples(examples);
     } catch (err) {
-        console.error("Error loading examples:", err);
+        console.warn("Backend unavailable, loading static VIDEO_TEST examples:", err);
+        renderExamples(DEFAULT_EXAMPLES);
     }
 }
 
@@ -96,8 +126,10 @@ function selectExample(path, cardElement, thumbnailUrl) {
         cardElement.classList.add("selected");
     }
 
-    // Set video src and poster for visual frame 1
-    inputVideo.src = `${API_BASE_URL}/api/video?path=${encodeURIComponent(path)}`;
+    // Serve static VIDEO_TEST/ directly from Frontend/Vercel when available; uploaded videos come from backend
+    inputVideo.src = path.startsWith("VIDEO_TEST/")
+        ? path
+        : `${API_BASE_URL}/api/video?path=${encodeURIComponent(path)}`;
     if (thumbnailUrl) {
         inputVideo.poster = thumbnailUrl;
     }
