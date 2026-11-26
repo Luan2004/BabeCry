@@ -423,16 +423,20 @@ async function runCameraRealtimeLoop() {
                     signal: cameraAbortController.signal,
                 });
 
-                if (resp.status === 404) {
+                if (!resp.ok) {
                     statusBanner.className = "status-banner";
                     statusBanner.style.backgroundColor = "#FEE2E2";
                     statusBanner.style.color = "#991B1B";
-                    statusBanner.textContent = "LỖI: Backend trên Kaggle chưa có API /api/analyze/frame. Vui lòng cập nhật server.py lên Kaggle.";
+                    if (resp.status === 404) {
+                        statusBanner.textContent = "LỖI: Backend trên Kaggle chưa có API /api/analyze/frame. Vui lòng import lại babecry.ipynb mới lên Kaggle.";
+                    } else {
+                        statusBanner.textContent = `LỖI CAMERA (HTTP ${resp.status}): Không thể phân tích khung hình.`;
+                    }
                     stopCameraStream();
                     return;
                 }
 
-                if (resp.ok && isCameraActive) {
+                if (isCameraActive) {
                     const data = await resp.json();
 
                     resultPlaceholder.style.display = "none";
@@ -459,7 +463,8 @@ async function runCameraRealtimeLoop() {
     }
 
     if (isCameraActive) {
-        cameraLoopTimer = setTimeout(runCameraRealtimeLoop, 0);
+        const delay = (inputVideo.readyState >= 2 && inputVideo.videoWidth > 0) ? 0 : 50;
+        cameraLoopTimer = setTimeout(runCameraRealtimeLoop, delay);
     }
 }
 
@@ -574,7 +579,7 @@ function resetOutputs() {
         outSeekbar.max = 100;
     }
     if (outTimeText) {
-        const dur = (inputVideo && inputVideo.duration && !isNaN(inputVideo.duration)) ? inputVideo.duration : 0;
+        const dur = (inputVideo && Number.isFinite(inputVideo.duration)) ? inputVideo.duration : 0;
         outTimeText.textContent = `0:00 / ${formatTime(dur)}`;
     }
 }
@@ -588,7 +593,7 @@ let isUserDraggingSeekBar = false;
 
 // Time formatting helper: m:ss (matches native video controls)
 function formatTime(seconds) {
-    if (!seconds || isNaN(seconds) || seconds < 0) return "0:00";
+    if (!seconds || !Number.isFinite(seconds) || seconds < 0) return "0:00";
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${String(secs).padStart(2, "0")}`;
@@ -649,20 +654,13 @@ function startAnalysis() {
         iconPause.style.display = "none";
     }
 
-    // Initial buffer placeholder (15% fast buffer)
+    // Show waiting placeholder until first frame arrives (no 15% buffer)
     resultPlaceholder.style.display = "block";
-    resultPlaceholder.innerHTML = `
-        <div style="font-weight: 600; font-size: 16px; margin-bottom: 8px;">ĐANG PHÂN TÍCH VIDEO...</div>
-        <div style="color: #64748b; font-size: 14px; margin-bottom: 14px;">Hệ thống đang đệm nhanh 15% video (~2-3 giây) trước khi phát đồng bộ.</div>
-        <div style="width: 80%; max-width: 320px; height: 12px; background: #e2e8f0; border-radius: 6px; overflow: hidden; margin: 0 auto;">
-            <div id="bufferBar" style="width: 0%; height: 100%; background: #2563eb; transition: width 0.2s;"></div>
-        </div>
-        <div id="bufferText" style="margin-top: 10px; font-weight: bold; color: #2563eb; font-size: 15px;">0% / 15% (Đang đệm nhanh...)</div>
-    `;
+    resultPlaceholder.textContent = "Đang phân tích và phát trực tiếp từng khung hình...";
     outputFrame.style.display = "none";
     outputFrame.src = "";
 
-    // Keep input video paused while buffering
+    // Keep input video paused until first frame arrives
     inputVideo.pause();
     inputVideo.currentTime = 0;
 
@@ -670,8 +668,8 @@ function startAnalysis() {
     statusBanner.style.backgroundColor = "#2563EB";
     statusBanner.style.color = "#FFFFFF";
     statusBanner.innerHTML = `
-        <div class="banner-title">[TỐC ĐỘ CAO] Hệ thống đang phân tích nhanh (imgsz=480, skip=2)...</div>
-        <div class="banner-desc">Khi tiến trình đạt 15% (~2-3 giây đầu), video gốc và kết quả nhận diện sẽ tự động phát đồng bộ.</div>
+        <div class="banner-title">[TRỰC TIẾP] Đang phân tích video...</div>
+        <div class="banner-desc">Khung hình kết quả sẽ hiển thị ngay khi backend xử lý xong khung hình đầu tiên.</div>
     `;
 
     const streamUrl = `${API_BASE_URL}/api/analyze/stream?video_path=${encodeURIComponent(currentVideoPath)}`;
@@ -697,19 +695,8 @@ function startAnalysis() {
 
             if (data.event === "step") {
                 bufferedSteps.push(data);
-                const pct = data.pct_done || 0;
-
-                const bufferBar = document.getElementById("bufferBar");
-                const bufferText = document.getElementById("bufferText");
-
                 if (!isPlaybackStarted) {
-                    if (bufferBar) bufferBar.style.width = `${Math.min(100, (pct / 15) * 100)}%`;
-                    if (bufferText) bufferText.textContent = `${pct}% / 15% (Đang đệm nhanh...)`;
-
-                    // Start playback as soon as 15% of video is processed!
-                    if (pct >= 15) {
-                        startPlayback();
-                    }
+                    startPlayback();
                 } else {
                     outSeekbar.max = Math.max(1, bufferedSteps.length - 1);
                 }
@@ -882,7 +869,7 @@ outputFrame.addEventListener("click", () => {
 });
 
 inputVideo.addEventListener("loadedmetadata", () => {
-    if (inputVideo.duration && !isNaN(inputVideo.duration)) {
+    if (inputVideo.duration && Number.isFinite(inputVideo.duration)) {
         if (outTimeText) {
             outTimeText.textContent = `0:00 / ${formatTime(inputVideo.duration)}`;
         }
