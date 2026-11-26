@@ -110,9 +110,16 @@ let currentVideoPath = "";
 let eventSource = null;
 let isAnalyzing = false;
 let cameraStream = null;
-let mediaRecorder = null;
-let recordedChunks = [];
-let cameraMimeType = "video/webm";
+let isCameraActive = false;
+let cameraLoopTimer = null;
+let cameraAbortController = null;
+let cameraCanvas = null;
+let cameraAudioCtx = null;
+let cameraAudioProcessor = null;
+let cameraAudioSource = null;
+let cameraPcmRing = new Float32Array(16000 * 2); // 2s rolling buffer at 16kHz
+let cameraPcmFilled = 0;
+let cameraAloneStartMs = null;
 
 const DEFAULT_EXAMPLES = [
     {
@@ -293,7 +300,7 @@ async function handleUploadFile(file) {
     }
 }
 
-// 3b. Computer Camera Capture Handling
+// 3b. Real-Time Computer Camera Capture & Live Analysis
 function resetCameraButton() {
     if (cameraBtn) {
         cameraBtn.textContent = "Bật Camera";
@@ -301,15 +308,67 @@ function resetCameraButton() {
     }
 }
 
-function stopCameraStream() {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-        try {
-            mediaRecorder.onstop = null;
-            mediaRecorder.stop();
-        } catch (_) {}
+function downsampleTo16k(inputFloat32, inputSampleRate) {
+    if (inputSampleRate === 16000) return inputFloat32;
+    const ratio = inputSampleRate / 16000;
+    const outLen = Math.floor(inputFloat32.length / ratio);
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+        out[i] = inputFloat32[Math.floor(i * ratio)];
     }
-    mediaRecorder = null;
-    recordedChunks = [];
+    return out;
+}
+
+function appendAudioToRing(samples16k) {
+    const cap = cameraPcmRing.length;
+    if (samples16k.length >= cap) {
+        cameraPcmRing.set(samples16k.subarray(samples16k.length - cap));
+        cameraPcmFilled = cap;
+        return;
+    }
+    const shift = samples16k.length;
+    cameraPcmRing.copyWithin(0, shift);
+    cameraPcmRing.set(samples16k, cap - shift);
+    cameraPcmFilled = Math.min(cap, cameraPcmFilled + shift);
+}
+
+function getCameraAudioBase64() {
+    if (cameraPcmFilled < 4000) return "";
+    const slice = cameraPcmRing.subarray(cameraPcmRing.length - cameraPcmFilled);
+    const bytes = new Uint8Array(slice.buffer, slice.byteOffset, slice.byteLength);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+}
+
+function stopCameraStream() {
+    isCameraActive = false;
+    if (cameraLoopTimer) {
+        clearTimeout(cameraLoopTimer);
+        cameraLoopTimer = null;
+    }
+    if (cameraAbortController) {
+        try { cameraAbortController.abort(); } catch (_) {}
+        cameraAbortController = null;
+    }
+    if (cameraAudioProcessor) {
+        try { cameraAudioProcessor.disconnect(); } catch (_) {}
+        cameraAudioProcessor = null;
+    }
+    if (cameraAudioSource) {
+        try { cameraAudioSource.disconnect(); } catch (_) {}
+        cameraAudioSource = null;
+    }
+    if (cameraAudioCtx) {
+        try { cameraAudioCtx.close(); } catch (_) {}
+        cameraAudioCtx = null;
+    }
+    cameraPcmFilled = 0;
+    cameraAloneStartMs = null;
+
     if (cameraStream) {
         cameraStream.getTracks().forEach(track => track.stop());
         cameraStream = null;
@@ -317,7 +376,87 @@ function stopCameraStream() {
     inputVideo.srcObject = null;
     inputVideo.muted = false;
     inputVideo.controls = true;
+    stopBtn.disabled = !isAnalyzing;
+    runBtn.disabled = isAnalyzing;
     resetCameraButton();
+}
+
+async function runCameraRealtimeLoop() {
+    if (!isCameraActive || !cameraStream) return;
+
+    try {
+        if (inputVideo.readyState >= 2 && inputVideo.videoWidth > 0) {
+            if (!cameraCanvas) {
+                cameraCanvas = document.createElement("canvas");
+            }
+            const maxW = 640;
+            const scale = inputVideo.videoWidth > maxW ? (maxW / inputVideo.videoWidth) : 1;
+            cameraCanvas.width = Math.round(inputVideo.videoWidth * scale);
+            cameraCanvas.height = Math.round(inputVideo.videoHeight * scale);
+            const ctx = cameraCanvas.getContext("2d");
+            ctx.drawImage(inputVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
+
+            const blob = await new Promise(res => cameraCanvas.toBlob(res, "image/jpeg", 0.75));
+            if (blob && isCameraActive) {
+                const formData = new FormData();
+                formData.append("frame", blob, "frame.jpg");
+                const audioB64 = getCameraAudioBase64();
+                if (audioB64) {
+                    formData.append("audio_b64", audioB64);
+                }
+                const aloneSec = cameraAloneStartMs ? (Date.now() - cameraAloneStartMs) / 1000 : 0;
+                formData.append("alone_duration_sec", aloneSec.toFixed(1));
+
+                cameraAbortController = new AbortController();
+                const resp = await fetch(`${API_BASE_URL}/api/analyze/frame`, {
+                    method: "POST",
+                    body: formData,
+                    signal: cameraAbortController.signal,
+                });
+
+                if (resp.status === 404) {
+                    statusBanner.className = "status-banner";
+                    statusBanner.style.backgroundColor = "#FEE2E2";
+                    statusBanner.style.color = "#991B1B";
+                    statusBanner.textContent = "LỖI: Backend trên Kaggle chưa có API /api/analyze/frame. Vui lòng cập nhật server.py lên Kaggle.";
+                    stopCameraStream();
+                    return;
+                }
+
+                if (resp.ok && isCameraActive) {
+                    const data = await resp.json();
+                    if (data.is_alone) {
+                        if (!cameraAloneStartMs) cameraAloneStartMs = Date.now();
+                    } else {
+                        cameraAloneStartMs = null;
+                    }
+
+                    resultPlaceholder.style.display = "none";
+                    outputFrame.style.display = "block";
+                    outputFrame.src = `data:image/jpeg;base64,${data.frame_b64}`;
+
+                    statusBanner.className = "status-banner active";
+                    statusBanner.style.backgroundColor = data.color;
+                    statusBanner.style.color = "#FFFFFF";
+                    statusBanner.innerHTML = `
+                        <div class="banner-title">${data.title}</div>
+                        <div class="banner-desc">${data.description}</div>
+                    `;
+                    visionStatus.textContent = data.vision_text;
+                    audioStatus.textContent = data.audio_text;
+                    causeStatus.textContent = data.cause_text;
+                }
+            }
+        }
+    } catch (err) {
+        if (err.name !== "AbortError") {
+            console.warn("Realtime camera frame error:", err);
+        }
+    }
+
+    if (isCameraActive) {
+        cameraLoopTimer = setTimeout(runCameraRealtimeLoop, 50);
+    }
 }
 
 async function startCamera() {
@@ -332,9 +471,15 @@ async function startCamera() {
 
     try {
         try {
-            cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            cameraStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 640 }, height: { ideal: 480 } },
+                audio: true,
+            });
         } catch (_) {
-            cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            cameraStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 640 }, height: { ideal: 480 } },
+                audio: false,
+            });
         }
 
         document.querySelectorAll(".example-card").forEach(c => c.classList.remove("selected"));
@@ -349,61 +494,47 @@ async function startCamera() {
         dropzone.style.display = "none";
         await inputVideo.play();
 
-        recordedChunks = [];
-        const preferredTypes = ["video/mp4", "video/webm;codecs=vp8,opus", "video/webm"];
-        cameraMimeType = preferredTypes.find(t => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t)) || "video/webm";
-        mediaRecorder = new MediaRecorder(cameraStream, { mimeType: cameraMimeType });
-        mediaRecorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) {
-                recordedChunks.push(e.data);
+        if (cameraStream.getAudioTracks().length > 0) {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                cameraAudioCtx = new AudioCtx();
+                cameraAudioSource = cameraAudioCtx.createMediaStreamSource(cameraStream);
+                cameraAudioProcessor = cameraAudioCtx.createScriptProcessor(4096, 1, 1);
+                cameraAudioProcessor.onaudioprocess = (e) => {
+                    if (!isCameraActive) return;
+                    const ch0 = e.inputBuffer.getChannelData(0);
+                    appendAudioToRing(downsampleTo16k(ch0, cameraAudioCtx.sampleRate));
+                };
+                cameraAudioSource.connect(cameraAudioProcessor);
+                cameraAudioProcessor.connect(cameraAudioCtx.destination);
+            } catch (audioErr) {
+                console.warn("WebAudio capture unavailable:", audioErr);
             }
-        };
-        mediaRecorder.start(500);
+        }
+
+        isCameraActive = true;
+        cameraAloneStartMs = null;
+        runBtn.disabled = true;
+        stopBtn.disabled = false;
 
         if (cameraBtn) {
             cameraBtn.textContent = "Tắt Camera";
             cameraBtn.classList.add("camera-active");
         }
 
+        resetOutputs();
+        resultPlaceholder.textContent = "Đang kết nối camera trực tiếp (Realtime)...";
         statusBanner.className = "status-banner";
         statusBanner.style.backgroundColor = "#FEF3C7";
         statusBanner.style.color = "#92400E";
-        statusBanner.textContent = 'CAMERA ĐANG BẬT: Đang ghi hình từ camera máy tính. Bấm "Tắt Camera" để lưu video hoặc bấm "Phân Tích Video" để dừng ghi và phân tích ngay.';
-        resetOutputs();
+        statusBanner.textContent = "CAMERA REALTIME: Đang phân tích hình ảnh và âm thanh trực tiếp...";
+
+        runCameraRealtimeLoop();
     } catch (err) {
         console.error("Camera access error:", err);
         stopCameraStream();
         statusBanner.textContent = "LỖI: Không thể mở camera máy tính. Vui lòng kiểm tra quyền truy cập camera.";
     }
-}
-
-function stopCameraAndUpload() {
-    return new Promise((resolve) => {
-        if (!mediaRecorder || mediaRecorder.state === "inactive") {
-            stopCameraStream();
-            resolve(false);
-            return;
-        }
-
-        const chunksRef = recordedChunks;
-        const mime = cameraMimeType || "video/webm";
-        const ext = mime.includes("mp4") ? "mp4" : "webm";
-
-        mediaRecorder.onstop = async () => {
-            const blob = new Blob(chunksRef, { type: mime });
-            stopCameraStream();
-            if (blob.size === 0) {
-                statusBanner.textContent = "LỖI: Video từ camera trống, vui lòng thử lại.";
-                resolve(false);
-                return;
-            }
-            const file = new File([blob], `camera_${Date.now()}.${ext}`, { type: mime });
-            const ok = await handleUploadFile(file);
-            resolve(ok);
-        };
-
-        mediaRecorder.stop();
-    });
 }
 
 // 4. Reset Outputs
@@ -483,12 +614,7 @@ function updateControlsUI(step, idx) {
 }
 
 // 5. Start Streaming Analysis with Buffer Strategy
-async function startAnalysis() {
-    if (cameraStream) {
-        const uploaded = await stopCameraAndUpload();
-        if (!uploaded) return;
-    }
-
+function startAnalysis() {
     if (!currentVideoPath) {
         alert("Vui lòng chọn video mẫu hoặc tải lên video trước khi phân tích.");
         return;
@@ -790,15 +916,29 @@ if (addVideoBtn) {
 }
 if (cameraBtn) {
     cameraBtn.addEventListener("click", () => {
-        if (cameraStream) {
-            stopCameraAndUpload();
+        if (isCameraActive) {
+            stopCameraStream();
+            statusBanner.className = "status-banner";
+            statusBanner.style.backgroundColor = "#F1F5F9";
+            statusBanner.style.color = "#475569";
+            statusBanner.textContent = "TRẠNG THÁI: Đã tắt camera.";
         } else {
             startCamera();
         }
     });
 }
 runBtn.addEventListener("click", startAnalysis);
-stopBtn.addEventListener("click", stopAnalysis);
+stopBtn.addEventListener("click", () => {
+    if (isCameraActive) {
+        stopCameraStream();
+        statusBanner.className = "status-banner";
+        statusBanner.style.backgroundColor = "#F1F5F9";
+        statusBanner.style.color = "#475569";
+        statusBanner.textContent = "TRẠNG THÁI: Đã dừng camera.";
+    } else {
+        stopAnalysis();
+    }
+});
 
 // Initialize on DOM Ready
 document.addEventListener("DOMContentLoaded", async () => {
