@@ -7,7 +7,7 @@
 
 // Base URL for Backend API calls.
 // Priority: 1) ?api=https://... query param (saved to localStorage), 2) localStorage, 3) DEFAULT_API_BASE_URL
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
+const DEFAULT_API_BASE_URL = "https://tub-her-verse-scheduled.trycloudflare.com";
 const urlParams = new URLSearchParams(window.location.search);
 const apiFromQuery = urlParams.get("api");
 if (apiFromQuery) {
