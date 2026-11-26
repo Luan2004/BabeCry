@@ -51,11 +51,6 @@ let isAnalyzing = false;
 
 const DEFAULT_EXAMPLES = [
     {
-        filename: "294613747-rivne-ukraine-june-12-2024-chi.mp4",
-        path: "VIDEO_TEST/294613747-rivne-ukraine-june-12-2024-chi.mp4",
-        thumbnail_url: "thumbnails/294613747-rivne-ukraine-june-12-2024-chi.jpg"
-    },
-    {
         filename: "280167556-female-teacher-checking-kids-d.mp4",
         path: "VIDEO_TEST/280167556-female-teacher-checking-kids-d.mp4",
         thumbnail_url: "thumbnails/280167556-female-teacher-checking-kids-d.jpg"
@@ -104,7 +99,9 @@ async function loadExamples() {
             return;
         }
         const data = await response.json();
-        const examples = (data.examples && data.examples.length > 0) ? data.examples : DEFAULT_EXAMPLES;
+        const allowedFilenames = new Set(DEFAULT_EXAMPLES.map(ex => ex.filename));
+        const filtered = (data.examples || []).filter(ex => allowedFilenames.has(ex.filename));
+        const examples = filtered.length > 0 ? filtered : DEFAULT_EXAMPLES;
         renderExamples(examples);
     } catch (err) {
         console.warn("Backend unavailable, loading static VIDEO_TEST examples:", err);
