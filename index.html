@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Giám Sát An Toàn Trẻ Em</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="gradio-container">
+        <!-- Header Box -->
+        <header class="header-box">
+            <h1 class="header-title">HỆ THỐNG GIÁM SÁT AN TOÀN TRẺ EM</h1>
+            <p class="header-sub">Phát hiện trẻ bị bỏ lại một mình và nhận diện nguyên nhân tiếng khóc trực tiếp từ video.</p>
+        </header>
+
+        <!-- Main Screen: Side-by-Side Layout -->
+        <main>
+            <div class="video-grid-row">
+                <!-- Left Panel: Input Video -->
+                <section class="panel-card">
+                    <span class="panel-label">Video Đầu Vào (Hình Ảnh & Âm Thanh)</span>
+                    <div class="media-viewer" id="videoViewer">
+                        <div class="upload-dropzone" id="dropzone">
+                            <input type="file" id="fileInput" accept="video/mp4,video/x-m4v,video/*">
+                            <div class="upload-title">Kéo thả video vào đây hoặc bấm để chọn video từ máy</div>
+                            <div class="upload-sub">Định dạng hỗ trợ: MP4, AVI, MKV, MOV (Tối đa 100MB)</div>
+                        </div>
+                        <video id="inputVideo" controls style="display: none;"></video>
+                    </div>
+                </section>
+
+                <!-- Right Panel: Real-Time Detection Result -->
+                <section class="panel-card" id="outputPanel">
+                    <span class="panel-label">Kết Quả Nhận Diện Trực Tiếp (Từng Khung Hình)</span>
+                    <div class="media-viewer media-viewer-output" id="resultViewer">
+                        <div class="media-placeholder" id="resultPlaceholder">
+                            Chưa có khung hình nhận diện. Vui lòng chọn video và bấm "Phân Tích Video".
+                        </div>
+                        <img id="outputFrame" src="" alt="Kết Quả Nhận Diện" style="display: none; cursor: pointer;" title="Bấm vào hình để Tạm dừng / Tiếp tục">
+                    </div>
+                    
+                    <!-- Output Video Player Controls (Underneath & Outside the video) -->
+                    <div class="output-controls" id="outputControls">
+                        <button type="button" class="v-btn" id="outPlayPauseBtn" title="Tiếp tục / Tạm dừng">
+                            <svg class="icon-play" id="iconPlay" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display: block;">
+                                <path d="M8 5v14l11-7z"/>
+                            </svg>
+                            <svg class="icon-pause" id="iconPause" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+                                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                            </svg>
+                        </button>
+                        <span class="v-time" id="outTimeText">0:00 / 0:00</span>
+                        <div class="v-seekbar-container">
+                            <input type="range" class="v-seekbar" id="outSeekbar" min="0" max="100" value="0" step="1" title="Tua video">
+                        </div>
+                        <button type="button" class="v-btn" id="outFullscreenBtn" title="Toàn màn hình">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Action Button Row -->
+            <div class="action-row">
+                <button type="button" class="primary-btn" id="runBtn">Phân Tích Video</button>
+                <button type="button" class="secondary-btn" id="stopBtn" disabled>Dừng</button>
+            </div>
+
+            <!-- Safety Status Banner -->
+            <div class="status-banner" id="statusBanner">
+                TRẠNG THÁI: Vui lòng chọn video mẫu bên dưới hoặc tải lên video để phân tích.
+            </div>
+
+            <!-- Metric KPI Cards (Row of 3) -->
+            <div class="kpi-grid-row">
+                <div class="kpi-card">
+                    <div class="kpi-label">Giám Sát Hình Ảnh</div>
+                    <div class="kpi-value" id="visionStatus">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Nhận Diện Âm Thanh</div>
+                    <div class="kpi-value" id="audioStatus">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Nguyên Nhân Tiếng Khóc</div>
+                    <div class="kpi-value" id="causeStatus">-</div>
+                </div>
+            </div>
+
+            <!-- Test Examples Section (Visual Thumbnail Cards) -->
+            <section class="examples-section">
+                <h2 class="examples-title">Video Mẫu Kiểm Thử (Thư Mục VIDEO_TEST)</h2>
+                <div class="examples-grid" id="examplesGrid">
+                    <!-- Populated dynamically with thumbnail cards -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Application Script -->
+    <script src="js/app.js"></script>
+</body>
+</html>
