@@ -386,6 +386,7 @@ function stopCameraStream() {
 
 async function runCameraRealtimeLoop() {
     if (!isCameraActive || !cameraStream) return;
+    let frameHadError = false;
 
     try {
         if (inputVideo.readyState >= 2 && inputVideo.videoWidth > 0) {
@@ -428,9 +429,13 @@ async function runCameraRealtimeLoop() {
                     statusBanner.style.backgroundColor = "#FEE2E2";
                     statusBanner.style.color = "#991B1B";
                     if (resp.status === 404) {
-                        statusBanner.textContent = "LỖI: Backend trên Kaggle chưa có API /api/analyze/frame. Vui lòng import lại babecry.ipynb mới lên Kaggle.";
+                        const msg = "LỖI: Backend trên Kaggle chưa có API /api/analyze/frame. Vui lòng import lại babecry.ipynb mới lên Kaggle.";
+                        statusBanner.textContent = msg;
+                        resultPlaceholder.textContent = msg;
                     } else {
-                        statusBanner.textContent = `LỖI CAMERA (HTTP ${resp.status}): Không thể phân tích khung hình.`;
+                        const msg = `LỖI CAMERA (HTTP ${resp.status}): Không thể phân tích khung hình.`;
+                        statusBanner.textContent = msg;
+                        resultPlaceholder.textContent = msg;
                     }
                     stopCameraStream();
                     return;
@@ -458,12 +463,23 @@ async function runCameraRealtimeLoop() {
         }
     } catch (err) {
         if (err.name !== "AbortError") {
+            frameHadError = true;
             console.warn("Realtime camera frame error:", err);
+            if (isCameraActive) {
+                statusBanner.className = "status-banner";
+                statusBanner.style.backgroundColor = "#FEE2E2";
+                statusBanner.style.color = "#991B1B";
+                const msg = `LỖI KẾT NỐI CAMERA: Không gọi được backend (${API_BASE_URL}). Đang thử lại...`;
+                statusBanner.textContent = msg;
+                if (outputFrame.style.display === "none") {
+                    resultPlaceholder.textContent = msg;
+                }
+            }
         }
     }
 
     if (isCameraActive) {
-        const delay = (inputVideo.readyState >= 2 && inputVideo.videoWidth > 0) ? 0 : 50;
+        const delay = frameHadError ? 500 : ((inputVideo.readyState >= 2 && inputVideo.videoWidth > 0) ? 0 : 50);
         cameraLoopTimer = setTimeout(runCameraRealtimeLoop, delay);
     }
 }
